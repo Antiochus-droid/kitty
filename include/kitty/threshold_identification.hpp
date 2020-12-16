@@ -32,45 +32,304 @@
 
 #pragma once
 
+#include <stdio.h>
+#include <stdlib.h>
+
+/*ILP_SOLVE LIBRARY*/
+#include <iostream>
+#include <cstdlib>
+#include <string>
+#include <fstream>
+#include <iostream>
+#include <cassert>
+
+
+
+
+
 #include <vector>
-// #include <lpsolve/lp_lib.h> /* uncomment this line to include lp_solve */
+#include <lpsolve/lp_lib.h> /* uncomment this line to include lp_solve */
+
+/*Include SOP representation of tt*/
+#include "isop.hpp"
+
 #include "traits.hpp"
+#include "operations.hpp"
+#include "properties.hpp"
+#include "implicant.hpp"
+#include "print.hpp"
+#include "cube.hpp"
+#include "constructors.hpp"
+#include "bit_operations.hpp"
 
-namespace kitty
-{
 
-/*! \brief Threshold logic function identification
 
-  Given a truth table, this function determines whether it is a threshold logic function (TF)
-  and finds a linear form if it is. A Boolean function is a TF if it can be expressed as
+namespace kitty {
 
-  f(x_1, ..., x_n) = \sum_{i=1}^n w_i x_i >= T
 
-  where w_i are the weight values and T is the threshold value.
-  The linear form of a TF is the vector [w_1, ..., w_n; T].
+    template<typename TT, typename = std::enable_if_t <is_complete_truth_table<TT>::value>>
+//Negative Unate  verification variable function
+     bool neg_unate(const TT &tt, int64_t i) {
 
-  \param tt The truth table
-  \param plf Pointer to a vector that will hold a linear form of `tt` if it is a TF.
-             The linear form has `tt.num_vars()` weight values and the threshold value
-             in the end.
-  \return `true` if `tt` is a TF; `false` if `tt` is a non-TF.
-*/
-template<typename TT, typename = std::enable_if_t<is_complete_truth_table<TT>::value>>
-bool is_threshold( const TT& tt, std::vector<int64_t>* plf = nullptr )
-{
-  std::vector<int64_t> linear_form;
+        auto numvars = tt.num_vars();
 
-  /* TODO */
-  /* if tt is non-TF: */
-  return false;
 
-  /* if tt is TF: */
-  /* push the weight and threshold values into `linear_form` */
-  if ( plf )
-  {
-    *plf = linear_form;
-  }
-  return true;
-}
+        auto const tt1 = cofactor0(tt, i);
+        auto const tt2 = cofactor1(tt, i);
+        for (auto bit = 0; bit < (2 << (numvars - 1)); bit++) {
+            if (get_bit(tt1, bit) >= get_bit(tt2, bit)) {
+                continue;
+            } else {
+                return false;
+            }
+        }
+        return true;
 
-} /* namespace kitty */
+    }
+
+    template<typename TT, typename = std::enable_if_t <is_complete_truth_table<TT>::value>>
+
+    //Positive Unate verification variable function
+     bool pos_unate(const TT &tt, int64_t i) {
+
+        auto numvars = tt.num_vars();
+
+
+        auto const tt1 = cofactor0(tt, i);
+        auto const tt2 = cofactor1(tt, i);
+        for (auto bit = 0; bit < (2 << (numvars - 1)); bit++) {
+            if (get_bit(tt1, bit) <= get_bit(tt2, bit)) {
+                continue;
+            } else {
+                return false;
+            }
+        }
+        return true;
+
+    }
+
+    template<typename TT, typename = std::enable_if_t <is_complete_truth_table<TT>::value>>
+    //Unate  function or not (each variable or positive or negative unate)
+     bool unate(const TT &tt) {
+        int numvars = tt.num_vars();
+        for (int i = 0u; i < numvars; i++) {
+
+            if (neg_unate(tt, i) == true || pos_unate(tt, i) == true) {
+                continue;
+            } else {
+                return false;
+            }
+        }
+        return true;
+    }
+
+
+    template<typename TT, typename = std::enable_if_t <is_complete_truth_table<TT>::value>>
+
+    bool is_threshold(const TT &tt, std::vector <int64_t> *plf = nullptr) {
+
+        std::vector <int64_t> linear_form;
+        std::vector <int8_t> negative_unate;  //  In vector all the bits  which are negative unate
+        TT tt1 = tt;
+
+        //If not  unate  -->  not TF-function
+        if (unate(tt) == false) {
+             return false;
+        }
+        /*we do f' to have only a  positive  unate variable  function */
+        for (unsigned int i = 0u; i < tt.num_vars(); i++) {
+
+            if (pos_unate(tt, i) == true) {
+                continue;
+                /* If not positive unate it is negative and we flip  and  store to have only positive unate function
+                 * f' */
+            } else {
+                negative_unate.push_back(i);
+                flip_inplace(tt1, i);
+
+            } /* allows to flip the index to obtain only positive unate on tt1*/
+        }
+        /* We calculate ONSET and  OFFSET  SOP notation with f' */
+        std::vector <cube> cubes_pos = isop(tt1);
+        std::vector <cube> cubes_neg = isop(unary_not(tt1));
+
+        /* ILP SOLVE */
+
+
+        lprec *lp;
+        int Ncol, *colno = NULL, ret = 0;
+        REAL *row = NULL;
+        Ncol = tt.num_vars() + 1;
+
+        /* We will build the model row by row */
+
+
+        lp = make_lp(0, Ncol);
+        if (lp == NULL) {
+            return false; /* couldn't construct a new model... */}
+
+
+
+
+
+        colno = (int *) malloc(Ncol * sizeof(*colno));
+        row = (REAL *) malloc(Ncol * sizeof(*row));
+
+        if ((colno == NULL) || (row == NULL)) {
+            return false;
+        }
+        // All variables are positive (weights and Treshold)
+         if (ret == 0) {
+            set_add_rowmode(lp, TRUE);
+            for (int i = 0; i < Ncol; i++) {
+
+                for (int j = 0; j < Ncol; j++) {
+
+                    colno[j] = j + 1;
+                    if (i == j) {
+                        row[j] = 1;
+                    }
+
+                    else{
+                        row[j] = 0;
+                    }
+                }
+                add_constraintex(lp, Ncol, row, colno, GE, 0);
+
+            }
+        }
+
+        if (ret == 0) {
+
+                //ONSET equations
+            for (unsigned long c = 0; c < cubes_pos.size(); c++) {
+
+                cube C = cubes_pos.at(c);
+
+                for (uint8_t i = 0; i < tt.num_vars(); i++) {
+                    colno[i] = i + 1;
+                    bool mask = C.get_mask(i); //If  variable is in the cube
+
+                    if (mask) {
+                        row[i] = 1.0;
+                    } else {
+                        row[i] = 0.0;
+                    }
+
+                }
+                colno[tt.num_vars()]=tt.num_vars()+1;
+                row[tt.num_vars()] = -1.0;
+
+                add_constraintex(lp, Ncol, row, colno, GE, 0);
+
+            }
+        }
+
+
+            if (ret == 0) {
+                //OFFSET equations
+                for (unsigned long c = 0; c < cubes_neg.size(); c++) {
+
+                    cube C = cubes_neg.at(c);
+                    for (uint8_t i = 0; i < tt.num_vars(); i++) {
+                        colno[i] = i + 1;
+
+
+                        bool mask = C.get_mask(i); //If variable is not on the cube
+
+                        if ( !mask) {
+                            row[i] = 1.0;
+                        } else {
+                            row[i] = 0.0;
+                        }
+                    }
+                    colno[tt.num_vars()] = tt.num_vars() + 1; //For  the treshold condition
+                    row[tt.num_vars()] = -1.0;
+
+
+                    add_constraintex(lp, Ncol, row, colno, LE, -1);
+
+                }
+            }
+
+                if (ret == 0) {
+                    set_add_rowmode(lp, FALSE); /* rowmode should be turned off again when done building the model */
+
+
+
+                    for (int j = 0; j < Ncol; j++) {
+                        colno[j] = j + 1;
+                        row[j] = 1;
+                    }
+
+
+                    set_obj_fnex(lp, Ncol, row, colno);
+
+                }
+
+
+                    /* set the object direction to minimize */
+                    set_minim(lp);
+
+      //  write_LP(lp, stdout);
+      //  write_lp(lp, "model.lp");
+
+
+
+                    set_verbose(lp, IMPORTANT);
+
+                    /* Now let lpsolve calculate a solution */
+                    ret = solve(lp);
+                   if (ret != 0){
+                       if ( colno != NULL )
+                           free( colno );
+                       if ( row != NULL )
+                           free( row );
+
+                       if ( lp != NULL )
+                           delete_lp( lp );
+                        return false;
+                    }
+
+
+
+                else{
+
+
+                    get_variables(lp, row);
+
+
+                    //Linear_form make all variables
+                    for (int i = 0; i < Ncol; i++) {
+                        linear_form.push_back((int64_t) row[i]); //Int64_T to avoid issues
+                    }
+
+                    //Change from f"  to  f (redo negative unate variablesc condition)
+                    for (auto i : negative_unate) {
+                        linear_form.at(i) = -linear_form.at(i);
+                        linear_form[Ncol - 1] = linear_form[Ncol - 1] + linear_form[i];
+                    }
+
+
+
+                    *plf = linear_form;
+                    //Free space
+                if ( colno != NULL )
+                    free( colno );
+                if ( row != NULL )
+                    free( row );
+
+                if ( lp != NULL )
+                    delete_lp( lp );
+
+
+                return true;
+            }
+        }
+
+    }
+
+
+
+/* namespace kitty */
+
