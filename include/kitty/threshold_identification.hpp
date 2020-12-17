@@ -209,8 +209,8 @@ namespace kitty {
                 for (uint8_t i = 0; i < tt.num_vars(); i++) {
                     colno[i] = i + 1;
                     bool mask = C.get_mask(i); //If  variable is in the cube
-
-                    if (mask) {
+                    bool bits= C.get_bit(i); //What is the value of the bit
+                    if (mask & bits) {
                         row[i] = 1.0;
                     } else {
                         row[i] = 0.0;
@@ -236,8 +236,8 @@ namespace kitty {
 
 
                         bool mask = C.get_mask(i); //If variable is not on the cube
-
-                        if ( !mask) {
+                        bool bits= C.get_bit(i); // What is the value of the bit
+                        if ((bits&mask) || !mask) {
                             row[i] = 1.0;
                         } else {
                             row[i] = 0.0;
